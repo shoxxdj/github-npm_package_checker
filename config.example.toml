@@ -1,0 +1,15 @@
+# Exemple de configuration complète (voir README pour tous les champs)
+mode = "crawl"              # "search" | "crawl" | "analyse" | "file"
+token_file = "token.txt"    # requis pour "search"/"crawl", ignoré pour "analyse"/"file"
+analyse = true               # équivalent de --analyse
+threads = 12                  # équivalent de --threads
+
+[notify]
+bot_token = "123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+chat_id = "-1001234567890"
+min_sensitivity = 4   # optionnel, défaut 4/10 ("modéré") — voir README, section --notify
+
+# Exemple séparé pour mode = "file" (analyse un package.json local, pas de GitHub) :
+#   mode = "file"
+#   file_path = "./package.json"
+# [notify] n'est pas autorisé avec mode = "file" (rejeté par load_config).
