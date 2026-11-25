@@ -50,6 +50,7 @@ base). L'ordre des arguments n'a pas d'importance.
 
 ```
 ./gh_package_finder --file chemin/vers/package.json
+./gh_package_finder --file chemin/vers/mon-projet      # un dossier contenant un package.json
 ```
 
 Mode entièrement local : ne touche ni à GitHub (aucun token requis) ni à la base SQLite
@@ -66,8 +67,13 @@ du crawl. Utile pour tester rapidement un projet en local ou dans une CI.
 - Vérifie chaque nom sur le registre npm public, puis applique les mêmes réductions de
   faux positifs que le reste de l'outil : scope confirmé privé via `.npmrc`, et scope npm
   déjà revendiqué par un tiers (voir sections dédiées plus bas).
+- Le filtre « chemins non représentatifs » (`examples/`, `demo/`, `vendor/`, `template/`...)
+  n'est **pas** appliqué : le fichier est désigné explicitement, un projet rangé dans
+  `~/demo/...` ou `~/vendor/...` est donc bien analysé.
 - Écrit `dependency_confusion_report_local.csv` (même format que le rapport principal) et
   affiche un résumé console coloré.
+- **Code de sortie** pensé pour la CI : `0` = rien à signaler, `2` = au moins un paquet
+  suspect, `1` = erreur (fichier introuvable, JSON invalide...).
 - **Non couvert par ce mode**, par nature (pas de dépôt GitHub associé) : score de
   sensibilité (`repo_sensitivity_score`/`_label` restent vides dans le CSV), détection
   monorepo/poly-repo, brouillon de divulgation responsable, et notification Telegram

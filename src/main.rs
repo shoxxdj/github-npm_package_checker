@@ -486,8 +486,22 @@ fn run_analysis(threads: usize, telegram: Option<TelegramConfig>) -> Result<(), 
 // contacter), et --notify n'est pas pris en charge dans ce mode (voir README).
 // =====================================================================================
 
-fn run_local_file_analysis(file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+// Retourne le nombre de paquets distincts retenus comme suspects (0 = rien à signaler),
+// utilisé par main() pour fixer le code de sortie (utile en CI).
+fn run_local_file_analysis(input_path: &str) -> Result<usize, Box<dyn std::error::Error>> {
     let agent = github::build_agent()?; // simple client HTTP, aucun token GitHub requis ici
+
+    // Accepte aussi bien le fichier lui-même qu'un dossier de projet contenant un
+    // package.json, et travaille sur le chemin absolu (repo_url file:// exploitable, et
+    // sondage des fichiers voisins indépendant du répertoire courant).
+    let mut resolved = PathBuf::from(input_path);
+    if resolved.is_dir() {
+        resolved = resolved.join("package.json");
+    }
+    let resolved = fs::canonicalize(&resolved)
+        .map_err(|e| format!("Impossible de lire {} : {}", resolved.display(), e))?;
+    let file_path_owned = resolved.to_string_lossy().to_string();
+    let file_path = file_path_owned.as_str();
 
     let content = fs::read_to_string(file_path)
         .map_err(|e| format!("Impossible de lire {} : {}", file_path, e))?;
@@ -501,8 +515,16 @@ fn run_local_file_analysis(file_path: &str) -> Result<(), Box<dyn std::error::Er
     let repo_full_name = format!("local:{}", display_name);
     let repo_url = format!("file://{}", file_path);
 
+    // Le filtre "chemin non représentatif" (examples/, demo/, vendor/, template/...) sert à
+    // écarter le bruit des dépôts GitHub crawlés. Ici l'utilisateur désigne explicitement
+    // le fichier : on ne l'applique pas, sinon un projet rangé dans ~/demo/ ou
+    // ~/vendor/... serait ignoré silencieusement. On passe donc un chemin neutre à
+    // l'extraction, puis on remet le vrai chemin dans les occurrences pour le rapport.
     let mut occurrences = Vec::new();
-    analysis::extract_dependencies(&json, &repo_full_name, &repo_url, file_path, &mut occurrences);
+    analysis::extract_dependencies(&json, &repo_full_name, &repo_url, "package.json", &mut occurrences);
+    for occ in &mut occurrences {
+        occ.path = file_path.to_string();
+    }
 
     if occurrences.is_empty() {
         println!(
@@ -511,7 +533,7 @@ fn run_local_file_analysis(file_path: &str) -> Result<(), Box<dyn std::error::Er
              versions ne sont pas résolvables depuis le registre npm — file:/link:/workspace:/git+...).",
             file_path
         );
-        return Ok(());
+        return Ok(0);
     }
 
     // --- Sondage des lockfiles/.npmrc voisins, en local (gratuit, pas de réseau) ---------
@@ -611,6 +633,7 @@ fn run_local_file_analysis(file_path: &str) -> Result<(), Box<dyn std::error::Er
         );
     }
 
+    let flagged_total = flagged_names.len();
     let mut sorted: Vec<&str> = flagged_names.into_iter().collect();
     sorted.sort();
     for name in sorted {
@@ -633,7 +656,14 @@ fn run_local_file_analysis(file_path: &str) -> Result<(), Box<dyn std::error::Er
     }
     println!("Rapport détaillé écrit dans : {}", LOCAL_REPORT_PATH);
 
-    Ok(())
+    Ok(flagged_total)
+}
+
+// Code de sortie du mode --file : 0 = rien à signaler, 2 = au moins un paquet suspect
+// (1 reste réservé aux erreurs : fichier illisible, JSON invalide...). Permet d'utiliser
+// directement l'outil comme garde-fou dans une CI.
+fn exit_for_local_findings(flagged: usize) -> ! {
+    std::process::exit(if flagged > 0 { 2 } else { 0 });
 }
 
 
@@ -932,7 +962,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
          {0} <fichier_token> [--analyse] [--threads N] [--notify fichier]   Recherche + téléchargement\n  \
          {0} --crawl <fichier_token> [--analyse] [--threads N] [--notify fichier]   Parcours exhaustif\n  \
          {0} --analyse [--threads N] [--notify fichier]   Rattrape et régénère le rapport\n  \
-         {0} --file chemin/vers/package.json   Analyse un package.json local (pas de GitHub)\n  \
+         {0} --file chemin/vers/package.json|dossier   Analyse un package.json local (pas de GitHub)\n  \
          {0} --config fichier.toml   Configuration complète depuis un fichier TOML (exclusif des autres options)\n\n\
          --analyse démarre un pool de threads (par défaut {1}) qui analysent les\n\
          package.json au fil de l'eau, dans une file séparée du téléchargement.\n\
@@ -943,7 +973,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
          démarrage dès que l'exécution commence. Non pris en charge avec --file.\n\
          --file lit et analyse un package.json local (dependency confusion + faux positifs\n\
          réduits via les lockfiles/.npmrc voisins sur disque), sans toucher à la base SQLite\n\
-         ni au réseau GitHub. Exclusif des autres modes.\n\
+         ni au réseau GitHub. Accepte un dossier de projet. Exclusif des autres modes.\n\
+         Code de sortie : 0 = rien à signaler, 2 = paquet(s) suspect(s), 1 = erreur.\n\
          --config fichier.toml remplace tous les arguments ci-dessus par un fichier TOML\n\
          (voir README pour le format).",
         raw_args[0], DEFAULT_ANALYSIS_THREADS
@@ -971,7 +1002,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("--file doit être suivi d'un chemin vers un package.json.\n\n{}", usage);
             std::process::exit(1);
         };
-        return run_local_file_analysis(file_path);
+        let flagged = run_local_file_analysis(file_path)?;
+        exit_for_local_findings(flagged);
     }
 
     // Parsing indépendant de l'ordre. "--threads" et "--notify" consomment l'argument
@@ -1052,7 +1084,8 @@ fn run_from_config(path: &str) -> Result<(), Box<dyn std::error::Error>> {
             let file_path = cfg
                 .file_path
                 .ok_or("file_path manquant pour le mode file (validé normalement par load_config)")?;
-            run_local_file_analysis(&file_path)
+            let flagged = run_local_file_analysis(&file_path)?;
+            exit_for_local_findings(flagged)
         }
         "crawl" => {
             let token_file = cfg
