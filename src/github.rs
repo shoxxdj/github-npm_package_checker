@@ -1,16 +1,13 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Deserialize;
-use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 use ureq::{Agent, AgentBuilder, Response};
 
 pub fn build_agent() -> Result<Agent, Box<dyn std::error::Error>> {
-    // ureq ne configure pas de backend TLS par défaut avec la feature "native-tls" :
-    // il faut construire explicitement un Agent avec le connecteur natif.
-    Ok(AgentBuilder::new()
-        .tls_connector(Arc::new(native_tls::TlsConnector::new()?))
-        .build())
+    // TLS via rustls (feature "tls" de ureq), racines de confiance du système
+    // (feature "native-certs") : pas de dépendance à OpenSSL.
+    Ok(AgentBuilder::new().build())
 }
 
 #[derive(Deserialize, Debug)]

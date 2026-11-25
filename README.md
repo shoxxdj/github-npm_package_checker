@@ -16,8 +16,10 @@ dependency confusion. Architecture modulaire :
 cargo build --release
 ```
 
-Nécessite `libssl-dev`/`pkg-config` (TLS natif) — `sqlite` est compilé en bundle
-automatiquement (feature `bundled` de `rusqlite`).
+Aucune dépendance système : le TLS passe par `rustls` (Rust pur, certificats racines du
+système via `native-certs`) et `sqlite` est compilé en bundle (feature `bundled` de
+`rusqlite`). Plus besoin de `libssl-dev`/`pkg-config`, et plus d'erreur de version
+d'OpenSSL/LibreSSL à la compilation.
 
 ## Les quatre modes
 
